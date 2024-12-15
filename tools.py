@@ -15,12 +15,19 @@ from transformers import (
 )
 from typing import List
 from operator import truediv, mul, add, sub
+
+# from langchain import Cohere, PromptTemplate
+from langchain_community.llms import Cohere  # Need to install langchain-cohere
+from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain import Cohere, PromptTemplate
+import os
 
 # Optional imports
 from googleapiclient.discovery import build
 
+# wikipedia related
+import requests
+import wikipedia
 
 """
 Calendar
@@ -105,47 +112,91 @@ def mean_pooling(token_embeddings: torch.Tensor, mask: torch.Tensor):
     return sentence_embeddings
 
 
-"""
-Wikipedia Search
+# """
+# Wikipedia Search
 
-Uses ColBERTv2 to retrieve Wikipedia documents.
+# Uses ColBERTv2 to retrieve Wikipedia documents.
 
-input_query - A string, the input query (e.g. "what is a dog?")
-k - The number of documents to retrieve
+# input_query - A string, the input query (e.g. "what is a dog?")
+# k - The number of documents to retrieve
 
-output - A list of strings, each string is a Wikipedia document
+# output - A list of strings, each string is a Wikipedia document
 
-Adapted from Stanford's DSP: https://github.com/stanfordnlp/dsp/
-Also see: https://github.com/lucabeetz/dsp
-"""
-
-
-class ColBERTv2:
-    def __init__(self, url: str):
-        self.url = url
-
-    def __call__(self, query, k=1):
-        topk = colbertv2_get_request(self.url, query, k)
-
-        topk = [doc["text"] for doc in topk]
-        return topk
+# Adapted from Stanford's DSP: https://github.com/stanfordnlp/dsp/
+# Also see: https://github.com/lucabeetz/dsp
+# """
 
 
-def colbertv2_get_request(url: str, query: str, k: int):
-    payload = {"query": query, "k": k}
-    res = requests.get(url, params=payload)
+# class ColBERTv2:
+#     def __init__(self, url: str):
+#         self.url = url
 
-    topk = res.json()["topk"][:k]
-    return topk
+#     def __call__(self, query, k=1):
+#         topk = colbertv2_get_request(self.url, query, k)
+
+#         topk = [doc["text"] for doc in topk]
+#         return topk
 
 
-def WikiSearch(input_query: str):
-    k = 10
-    retrieval_model = ColBERTv2(
-        "http://ec2-44-228-128-229.us-west-2.compute.amazonaws.com:8893/api/search"
-    )
-    output = retrieval_model(input_query, k)
-    return output
+# def colbertv2_get_request(url: str, query: str, k: int):
+#     payload = {"query": query, "k": k}
+#     res = requests.get(url, params=payload)
+
+#     topk = res.json()["topk"][:k]
+#     return topk
+
+
+# def WikiSearch(input_query: str):
+#     k = 10
+#     retrieval_model = ColBERTv2(
+#         "http://ec2-44-228-128-229.us-west-2.compute.amazonaws.com:8893/api/search"
+#     )
+#     output = retrieval_model(input_query, k)
+#     return output
+
+
+# def wiki_search_api(query: str, limit: int = 10):
+#     api_url = "https://en.wikipedia.org/w/api.php"
+#     params = {
+#         "action": "query",
+#         "format": "json",
+#         "list": "search",
+#         "srsearch": query,
+#         "srlimit": limit,
+#         "srprop": "snippet",
+#     }
+    
+#     response = requests.get(api_url, params=params)
+#     data = response.json()
+    
+#     results = []
+#     for item in data["query"]["search"]:
+#         results.append({
+#             "title": item["title"],
+#             "snippet": item["snippet"],
+#             "pageid": item["pageid"]
+#         })
+#     return results
+
+def wiki_search_simple(query: str, num_results: int = 10):
+    # Search for pages
+    search_results = wikipedia.search(query, results=num_results)
+    
+    # Get summaries
+    results = []
+    for title in search_results:
+        try:
+            page = wikipedia.page(title)
+            results.append({
+                'title': title,
+                'summary': wikipedia.summary(title, sentences=3),
+                'url': page.url
+            })
+        except wikipedia.exceptions.DisambiguationError as e:
+            continue
+        except wikipedia.exceptions.PageError as e:
+            continue
+    return results
 
 
 """
@@ -159,14 +210,30 @@ output - A string, the translated input query.
 """
 
 
+# def MT(input_query: str):
+#     model_name = "facebook/nllb-200-distilled-600M"
+#     tokenizer = AutoTokenizer.from_pretrained(model_name)
+#     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+#     input_ids = tokenizer(input_query, return_tensors="pt")
+#     outputs = model.generate(
+#         **input_ids,
+#         forced_bos_token_id=tokenizer.lang_code_to_id["eng_Latn"],
+#     )
+#     output = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+#     return output
+
 def MT(input_query: str):
     model_name = "facebook/nllb-200-distilled-600M"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    
+    # Fix: Get the token ID for English using the correct method
+    eng_token_id = tokenizer.convert_tokens_to_ids("eng_Latn")
+    
     input_ids = tokenizer(input_query, return_tensors="pt")
     outputs = model.generate(
         **input_ids,
-        forced_bos_token_id=tokenizer.lang_code_to_id["eng_Latn"],
+        forced_bos_token_id=eng_token_id,  # Use the correct token ID
     )
     output = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
     return output
@@ -207,107 +274,116 @@ output - String for generation
 Requires that you set your COHERE_API_KEY environment variable before starting.
 """
 def langchain_llmchain(input_question):
+    
+    if "COHERE_API_KEY" not in os.environ:
+        raise ValueError("Please set the COHERE_API_KEY environment variable")
+    
     # TODO: Check succinct if it's good once we don't have rate limited APIs
     template = """Please be succinct in your answer to this question.
 Question: {question}
 
 Answer: Let's think step by step."""
     prompt = PromptTemplate(template=template, input_variables=["question"])
-    llm = Cohere(model="command-xlarge-nightly")
+    # old model name
+    # llm = Cohere(model="command-xlarge-nightly")
+    # recent stable model
+    llm = Cohere(model="command")
+    
+    # create and use the chain
     chain = LLMChain(llm=llm, prompt=prompt)
     return chain.predict(question=input_question)
 
 
-"""
-HuggingFace API
+# """
+# HuggingFace API
 
-Uses HuggingFace's API to generate text.
+# Uses HuggingFace's API to generate text.
 
-input_query - A string, the input query (e.g. "what is a dog?")
+# input_query - A string, the input query (e.g. "what is a dog?")
 
-output - A string, the generated text
+# output - A string, the generated text
 
-API_TOKEN - your HuggingFace API token
-"""
-
-
-def HuggingfaceAPI(input_query: str):
-    model_id = "gpt-neox-20b"
-    API_TOKEN = "YOUR_API_TOKEN"
-    API_URL = "https://api-inference.huggingface.co/models/{model_id}".format(
-        model_id=model_id
-    )
-    headers = {"Authorization": f"Bearer {API_TOKEN}".format(API_TOKEN=API_TOKEN)}
-
-    def query(payload):
-        data = json.dumps(payload)
-        response = requests.request("POST", API_URL, headers=headers, data=data)
-        return json.loads(response.content.decode("utf-8"))
-
-    data = query(input_query)
-    return data[0]["generated_text"]
+# API_TOKEN - your HuggingFace API token
+# """
 
 
-"""
-Wolfram Alpha Calculator
+# def HuggingfaceAPI(input_query: str):
+#     model_id = "gpt-neox-20b"
+#     API_TOKEN = "YOUR_API_TOKEN"
+#     API_URL = "https://api-inference.huggingface.co/models/{model_id}".format(
+#         model_id=model_id
+#     )
+#     headers = {"Authorization": f"Bearer {API_TOKEN}".format(API_TOKEN=API_TOKEN)}
 
-pip install wolframalpha
+#     def query(payload):
+#         data = json.dumps(payload)
+#         response = requests.request("POST", API_URL, headers=headers, data=data)
+#         return json.loads(response.content.decode("utf-8"))
 
-Uses Wolfram Alpha API to calculate input query.
-
-input_query - A string, the input query (e.g. "what is 2 + 2?")
-
-output - A string, the answer to the input query
-
-wolfarm_alpha_appid - your Wolfram Alpha API key
-"""
-
-
-def WolframAlphaCalculator(input_query: str):
-    wolfram_alpha_appid = "YOUR_WOLFRAM_ALPHA_APPID"
-    wolfram_client = wolframalpha.Client(wolfram_alpha_appid)
-    res = wolfram_client.query(input_query)
-    assumption = next(res.pods).text
-    answer = next(res.results).text
-    return f"Assumption: {assumption} \nAnswer: {answer}"
+#     data = query(input_query)
+#     return data[0]["generated_text"]
 
 
-"""
-Google Search
+# """
+# Wolfram Alpha Calculator
 
-Uses Google's Custom Search API to retrieve Google Search results.
+# pip install wolframalpha
 
-input_query - The query to search for.
-num_results - The number of results to return.
-api_key - Your Google API key.
-cse_id - Your Google Custom Search Engine ID.
+# Uses Wolfram Alpha API to calculate input query.
 
-output - A list of dictionaries, each dictionary is a Google Search result
-"""
+# input_query - A string, the input query (e.g. "what is 2 + 2?")
 
+# output - A string, the answer to the input query
 
-def custom_search(query, api_key, cse_id, **kwargs):
-    service = build("customsearch", "v1", developerKey=api_key)
-    res = service.cse().list(q=query, cx=cse_id, **kwargs).execute()
-    return res["items"]
+# wolfarm_alpha_appid - your Wolfram Alpha API key
+# """
 
 
-def google_search(input_query: str):
-    api_key = "YOUR_GOOGLE_API_KEY"
-    cse_id = "YOUR_GOOGLE_CSE_ID"
-    num_results = 10
-    metadata_results = []
-    results = custom_search(
-        input_query, num=num_results, api_key=api_key, cse_id=cse_id
-    )
-    for result in results:
-        metadata_result = {
-            "snippet": result["snippet"],
-            "title": result["title"],
-            "link": result["link"],
-        }
-        metadata_results.append(metadata_result)
-    return metadata_results
+# def WolframAlphaCalculator(input_query: str):
+#     wolfram_alpha_appid = "YOUR_WOLFRAM_ALPHA_APPID"
+#     wolfram_client = wolframalpha.Client(wolfram_alpha_appid)
+#     res = wolfram_client.query(input_query)
+#     assumption = next(res.pods).text
+#     answer = next(res.results).text
+#     return f"Assumption: {assumption} \nAnswer: {answer}"
+
+
+# """
+# Google Search
+
+# Uses Google's Custom Search API to retrieve Google Search results.
+
+# input_query - The query to search for.
+# num_results - The number of results to return.
+# api_key - Your Google API key.
+# cse_id - Your Google Custom Search Engine ID.
+
+# output - A list of dictionaries, each dictionary is a Google Search result
+# """
+
+
+# def custom_search(query, api_key, cse_id, **kwargs):
+#     service = build("customsearch", "v1", developerKey=api_key)
+#     res = service.cse().list(q=query, cx=cse_id, **kwargs).execute()
+#     return res["items"]
+
+
+# def google_search(input_query: str):
+#     api_key = "YOUR_GOOGLE_API_KEY"
+#     cse_id = "YOUR_GOOGLE_CSE_ID"
+#     num_results = 10
+#     metadata_results = []
+#     results = custom_search(
+#         input_query, num=num_results, api_key=api_key, cse_id=cse_id
+#     )
+#     for result in results:
+#         metadata_result = {
+#             "snippet": result["snippet"],
+#             "title": result["title"],
+#             "link": result["link"],
+#         }
+#         metadata_results.append(metadata_result)
+#     return metadata_results
 
 
 """
@@ -324,93 +400,99 @@ output - A list of strings, the generated text
 
 def SteamSHP(input_query: str):
     device = "cuda"  # if you have a GPU
-    tokenizer = AutoTokenizer.from_pretrained("stanfordnlp/SteamSHP-flan-t5-large")
+    tokenizer = AutoTokenizer.from_pretrained(
+            "stanfordnlp/SteamSHP-flan-t5-large",
+            use_fast=False
+        )
     model = T5ForConditionalGeneration.from_pretrained(
         "stanfordnlp/SteamSHP-flan-t5-large"
     ).to(device)
     x = tokenizer([input_query], return_tensors="pt").input_ids.to(device)
-    y = model.generate(x, max_new_tokens=1)
+    # Increase max_new_tokens for longer responses
+    y = model.generate(x, max_new_tokens=50, min_length=20)
     output = tokenizer.batch_decode(y, skip_special_tokens=True)
     return output
 
 
-"""
-Goose AI
+# """
+# Goose AI
 
-pip install openai
+# pip install openai
 
-Uses GPT-NeoX 20B to generate text.
+# Uses GPT-NeoX 20B to generate text.
 
-input_query - A string, the input query (e.g. "what is a dog?")
+# input_query - A string, the input query (e.g. "what is a dog?")
 
-output - A string, the generated text
+# output - A string, the generated text
 
-openai.api_key - your GooseAI API key
-"""
-
-
-def GooseAI(input_query: str):
-    openai.api_key = "YOUR_API_KEY"
-    openai.api_base = "https://api.goose.ai/v1"
-    # Create a completion, return results streaming as they are generated.
-    # Run with `python3 -u` to ensure unbuffered output.
-    completion = openai.Completion.create(
-        engine="gpt-neo-20b", prompt=input_query, max_tokens=160
-    )
-    return completion.choices[0].text
+# openai.api_key - your GooseAI API key
+# """
 
 
-"""
-Bing Search
-
-Uses Bing's Custom Search API to retrieve Bing Search results.
-
-input_query: The query to search for.
-bing_subscription_key: Your Bing API key.
-num_results: The number of results to return.
-
-output: A list of dictionaries, each dictionary is a Bing Search result
-"""
+# def GooseAI(input_query: str):
+#     openai.api_key = "YOUR_API_KEY"
+#     openai.api_base = "https://api.goose.ai/v1"
+#     # Create a completion, return results streaming as they are generated.
+#     # Run with `python3 -u` to ensure unbuffered output.
+#     completion = openai.Completion.create(
+#         engine="gpt-neo-20b", prompt=input_query, max_tokens=160
+#     )
+#     return completion.choices[0].text
 
 
-def _bing_search_results(search_term: str, bing_subscription_key: str, count: int):
-    headers = {"Ocp-Apim-Subscription-Key": bing_subscription_key}
-    params = {
-        "q": search_term,
-        "count": count,
-        "textDecorations": True,
-        "textFormat": "HTML",
-    }
-    response = requests.get(
-        "https://api.bing.microsoft.com/v7.0/search", headers=headers, params=params
-    )
-    response.raise_for_status()
-    search_results = response.json()
-    return search_results["webPages"]["value"]
+# """
+# Bing Search
+
+# Uses Bing's Custom Search API to retrieve Bing Search results.
+
+# input_query: The query to search for.
+# bing_subscription_key: Your Bing API key.
+# num_results: The number of results to return.
+
+# output: A list of dictionaries, each dictionary is a Bing Search result
+# """
 
 
-def bing_search(input_query: str):
-    bing_subscription_key = "YOUR BING API KEY"
-    num_results = 10
-    metadata_results = []
-    results = _bing_search_results(
-        input_query, bing_subscription_key, count=num_results
-    )
-    for result in results:
-        metadata_result = {
-            "snippet": result["snippet"],
-            "title": result["name"],
-            "link": result["url"],
-        }
-        metadata_results.append(metadata_result)
-    return metadata_results
+# def _bing_search_results(search_term: str, bing_subscription_key: str, count: int):
+#     headers = {"Ocp-Apim-Subscription-Key": bing_subscription_key}
+#     params = {
+#         "q": search_term,
+#         "count": count,
+#         "textDecorations": True,
+#         "textFormat": "HTML",
+#     }
+#     response = requests.get(
+#         "https://api.bing.microsoft.com/v7.0/search", headers=headers, params=params
+#     )
+#     response.raise_for_status()
+#     search_results = response.json()
+#     return search_results["webPages"]["value"]
+
+
+# def bing_search(input_query: str):
+#     bing_subscription_key = "YOUR BING API KEY"
+#     num_results = 10
+#     metadata_results = []
+#     results = _bing_search_results(
+#         input_query, bing_subscription_key, count=num_results
+#     )
+#     for result in results:
+#         metadata_result = {
+#             "snippet": result["snippet"],
+#             "title": result["name"],
+#             "link": result["url"],
+#         }
+#         metadata_results.append(metadata_result)
+#     return metadata_results
 
 
 if __name__ == "__main__":
-    print(langchain_llmchain("Please respond"))
-
+    print("test started")
+    
+    print(langchain_llmchain("Please respond, what is a dog?"))
+    
     print(
-        WikiSearch("What is a dog?")
+        wiki_search_simple("What is a dog?")
     )  # Outputs a list of strings, each string is a Wikipedia document
 
     print(Calendar())  # Outputs a string, the current date
@@ -419,20 +501,20 @@ if __name__ == "__main__":
 
     print(MT("Un chien c'est quoi?"))  # What is a dog?
 
-    # Optional Tools
+    # # Optional Tools
 
-    print(
-        HuggingfaceAPI("What is a dog?")
-    )  # Outputs a string, the answer to the input query
+    # print(
+    #     HuggingfaceAPI("What is a dog?")
+    # )  # Outputs a string, the answer to the input query
 
-    print(SteamSHP("What is a dog?"))  # Outputs a list with an answer
+    # print(SteamSHP("What is a dog?"))  # Outputs a list with an answer
 
-    print(WolframAlphaCalculator("What is 2 + 2?"))  # 4
+    # print(WolframAlphaCalculator("What is 2 + 2?"))  # 4
 
-    print(GooseAI("What is a dog?"))  # Outputs a string, the answer to the input query
+    # print(GooseAI("What is a dog?"))  # Outputs a string, the answer to the input query
 
-    print(google_search("What is a dog?"))
-    # Outputs a list of dictionaries, each dictionary is a Google Search result
+    # print(google_search("What is a dog?"))
+    # # Outputs a list of dictionaries, each dictionary is a Google Search result
 
-    print(bing_search("What is a dog?"))
-    # Outputs a list of dictionaries, each dictionary is a Bing Search result
+    # print(bing_search("What is a dog?"))
+    # # Outputs a list of dictionaries, each dictionary is a Bing Search result
