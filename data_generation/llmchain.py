@@ -55,6 +55,12 @@ class LLMChainPostprocessing(APICallPostprocessing):
                 )
                 if ")" in outputs[j]["LLMChain"]:
                     outputs[j]["LLMChain"] = outputs[j]["LLMChain"].split(")")[0]
+                
+                # Handle empty or malformed strings
+                if not outputs[j]["LLMChain"]:
+                    print(f"Skipping empty LLMChain for output {j}")
+                    continue    
+                
                 if outputs[j]["LLMChain"][0] == "\"":
                     outputs[j]["LLMChain"] = outputs[j]["LLMChain"][1:]
                 if outputs[j]["LLMChain"][-1] == "\"":

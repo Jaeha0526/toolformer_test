@@ -82,7 +82,7 @@ if __name__ == "__main__":
             eta_m = eta_m - (eta_h*60)
             eta_s = eta_s - ((eta_m*60) + (eta_h*60*60))
             print(f"Found: {found_examples}/{num_examples}, ETA: {eta_h}H:{eta_m}M:{eta_s}s")
-            if found_examples//100 > prev_found//100:
+            if found_examples//5 > prev_found//5:
                 with open(f"llmchain_data_{args.device_id}.json", 'w') as f:
                     json.dump(output_dataset, f, indent=2)
             counter += 1

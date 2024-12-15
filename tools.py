@@ -222,21 +222,21 @@ output - A string, the translated input query.
 #     output = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
 #     return output
 
-def MT(input_query: str):
-    model_name = "facebook/nllb-200-distilled-600M"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+# def MT(input_query: str):
+#     model_name = "facebook/nllb-200-distilled-600M"
+#     tokenizer = AutoTokenizer.from_pretrained(model_name)
+#     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     
-    # Fix: Get the token ID for English using the correct method
-    eng_token_id = tokenizer.convert_tokens_to_ids("eng_Latn")
+#     # Fix: Get the token ID for English using the correct method
+#     eng_token_id = tokenizer.convert_tokens_to_ids("eng_Latn")
     
-    input_ids = tokenizer(input_query, return_tensors="pt")
-    outputs = model.generate(
-        **input_ids,
-        forced_bos_token_id=eng_token_id,  # Use the correct token ID
-    )
-    output = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
-    return output
+#     input_ids = tokenizer(input_query, return_tensors="pt")
+#     outputs = model.generate(
+#         **input_ids,
+#         forced_bos_token_id=eng_token_id,  # Use the correct token ID
+#     )
+#     output = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]
+#     return output
 
 
 """
@@ -499,7 +499,7 @@ if __name__ == "__main__":
 
     print(Calculator("400/1400"))  # For Optional Basic Calculator
 
-    print(MT("Un chien c'est quoi?"))  # What is a dog?
+    # print(MT("Un chien c'est quoi?"))  # What is a dog?
 
     # # Optional Tools
 
